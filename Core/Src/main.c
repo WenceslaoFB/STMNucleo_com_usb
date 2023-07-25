@@ -36,7 +36,7 @@
 
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
-
+const char UNER[]="UNER";
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
@@ -45,15 +45,19 @@ DMA_HandleTypeDef hdma_usart2_rx;
 DMA_HandleTypeDef hdma_usart2_tx;
 
 /* USER CODE BEGIN PV */
-uint8_t buffer_tx[] = "MENSAJE \r\n";
+volatile uint8_t buffer_tx[] = "MENSAJE \r\n";
 
-uint8_t buffer_rx[8];
-/*
-void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart){ //funcion para saber cuando una transferencia se completo
+volatile uint8_t buffer_rx[256];
 
-	HAL_UART_Receive_IT(&huart2, buffer_rx, 8);
-	HAL_UART_Transmit_IT(&huart2, buffer_tx, strlen((char*)buffer_tx));
-}*/
+volatile uint8_t indR_rx = 0;
+volatile uint8_t indW_rx = 0;
+
+
+
+volatile uint8_t ind_tx = 0;
+
+uint32_t cmdUNERprotocol;
+uint8_t bytesUNERprotocol;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -62,12 +66,78 @@ static void MX_GPIO_Init(void);
 static void MX_DMA_Init(void);
 static void MX_USART2_UART_Init(void);
 /* USER CODE BEGIN PFP */
-
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart);
+void DecodeQT();
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart){ //funcion para saber cuando una transferencia se completo
+
+	indW_rx++;
+	HAL_UART_Receive_IT(&huart2, (uint8_t *) &buffer_rx[indW_rx], 1);
+	//HAL_UART_Transmit_IT(&huart2, buffer_tx, strlen((char*)buffer_tx));
+}
+
+
+void DecodeQT(){
+	static uint8_t i=0,step=0,cksQT,counter=1,cmdPosInBuff;
+
+	switch(step){
+		case 0:
+			if(buffer_rx[indR_rx]==UNER[i]){
+				i++;
+				if(i==4){
+					step++;
+					i=0;
+					//cksQT='U'^'N'^'E'^'R';
+				}
+			}else
+				i=0;
+
+			break;
+		case 1:
+			//HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin);
+			bytesUNERprotocol=buffer_rx[indR_rx];
+			step++;
+			//cksQT^=bytesUNERprotocol;
+			break;
+		case 2:
+			if(buffer_rx[indR_rx]== 0x00){
+				step++;
+			}else{
+				step=0;
+			}
+			break;
+		case 3:
+			if(buffer_rx[indR_rx]==':'){
+				cksQT^='U'^'N'^'E'^'R'^bytesUNERprotocol^0x00^':';
+				step++;
+				HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin);
+			}else{
+				step=0;
+			}
+			break;
+		case 4:
+			if(counter==1)
+				cmdPosInBuff = indR_rx;
+			if(counter<bytesUNERprotocol){
+				cksQT^=buffer_rx[indR_rx];
+				counter++;
+			}else{
+				if(cksQT==buffer_rx[indR_rx]){
+					//DecodeCommands((uint8_t*)&buffer_rx, cmdPosInBuff);
+					HAL_UART_Transmit_IT(&huart2, (uint8_t *) &buffer_tx, strlen((char*)buffer_tx));
+					//HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin);
+				}
+				step=0;
+				counter=1;
+			}
+			break;
+	}
+	indR_rx++;
+}
 /* USER CODE END 0 */
 
 /**
@@ -101,15 +171,19 @@ int main(void)
   MX_DMA_Init();
   MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
-  //HAL_UART_Receive_IT(&huart2, buffer_rx, 8);
+  HAL_UART_Receive_IT(&huart2, (uint8_t *) &buffer_rx[indW_rx], 1);
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-	  HAL_UART_Transmit_IT(&huart2, buffer_tx, strlen((char*)buffer_tx));
-	  HAL_Delay(1000);
+	  //HAL_UART_Transmit_IT(&huart2, buffer_tx, strlen((char*)buffer_tx));
+	  //HAL_Delay(1000);
+
+	  if(indR_rx != indW_rx){
+		  DecodeQT();
+	  }
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
