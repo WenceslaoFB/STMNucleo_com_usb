@@ -18,7 +18,7 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
-#include "string.h"
+
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 
@@ -26,6 +26,19 @@
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
+typedef union{
+    struct{
+        uint8_t b0:1;
+        uint8_t b1:1;
+        uint8_t b2:1;
+        uint8_t b3:1;
+        uint8_t b4:1;
+        uint8_t b5:1;
+        uint8_t b6:1;
+        uint8_t b7:1;
+    }bit;
+    uint8_t byte;
+}flag;
 
 /* USER CODE END PTD */
 
@@ -37,24 +50,47 @@
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
 const char UNER[]="UNER";
+
+#define CMD_ALIVE 0xD2
+#define CMD_SENSORS 0xA0
+#define CMD_MAG_SENSOR 0xA1
+#define CMD_RFID_SENSOR 0xA2
+#define CMD_EMERGENCY_STOP 0xB0
+
+#define ALIVERECIVE flag1.bit.b0 //RECIBIO alive
+#define SENSORS_RECIVE flag1.bit.b1 //RECIBIO COMANDO PARA ENVIAR VALORES SENSORES CADA CIERTO TIEMPO
+#define FLAG2 flag1.bit.b2 //FLAG2
+#define FLAG3 flag1.bit.b3 //FLAG3
+
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
+TIM_HandleTypeDef htim3;
+
 UART_HandleTypeDef huart2;
 DMA_HandleTypeDef hdma_usart2_rx;
 DMA_HandleTypeDef hdma_usart2_tx;
 
 /* USER CODE BEGIN PV */
-volatile uint8_t buffer_tx[] = "MENSAJE \r\n";
+
+volatile flag flag1;
+
+volatile uint8_t buffer_tx[256];
 
 volatile uint8_t buffer_rx[256];
 
 volatile uint8_t indR_rx = 0;
 volatile uint8_t indW_rx = 0;
 
+volatile uint8_t indR_tx = 0;
+volatile uint8_t indW_tx = 0;
+volatile uint8_t cksTX = 0;
 
+volatile uint8_t listoSend = 0;
 
-volatile uint8_t ind_tx = 0;
+uint8_t timeoutSENSORS = 0;
+uint16_t size=0;
+
 
 uint32_t cmdUNERprotocol;
 uint8_t bytesUNERprotocol;
@@ -65,9 +101,14 @@ void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_DMA_Init(void);
 static void MX_USART2_UART_Init(void);
+static void MX_TIM3_Init(void);
 /* USER CODE BEGIN PFP */
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart);
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim);
 void DecodeQT();
+void DecodeCommands(uint8_t *buffer, uint8_t indexCMD);
+void SendData(uint8_t cmd);
+void uart();
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -80,6 +121,30 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart){ //funcion para saber cu
 	//HAL_UART_Transmit_IT(&huart2, buffer_tx, strlen((char*)buffer_tx));
 }
 
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim){
+
+	//HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin);
+	//HAL_UART_Transmit_IT(&huart2, buffer_tx, strlen((char*)buffer_tx));
+	if(SENSORS_RECIVE && timeoutSENSORS){
+		timeoutSENSORS--;
+	}
+}
+
+void uart(){
+
+		if((huart2.Instance->SR & UART_FLAG_TXE)==UART_FLAG_TXE){
+			huart2.Instance->DR=buffer_tx[indR_tx];
+			indR_tx++;
+		}
+/*
+	if(indW_tx > indR_tx){
+			size = indW_tx - indR_tx;
+	}else{
+			size = 256 - indR_tx;
+	}
+	HAL_UART_Transmit_IT(&huart2, (uint8_t *) &buffer_tx, size);
+	indR_tx++;*/
+}
 
 void DecodeQT(){
 	static uint8_t i=0,step=0,cksQT,counter=1,cmdPosInBuff;
@@ -114,7 +179,7 @@ void DecodeQT(){
 			if(buffer_rx[indR_rx]==':'){
 				cksQT^='U'^'N'^'E'^'R'^bytesUNERprotocol^0x00^':';
 				step++;
-				HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin);
+				//HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin);
 			}else{
 				step=0;
 			}
@@ -127,8 +192,8 @@ void DecodeQT(){
 				counter++;
 			}else{
 				if(cksQT==buffer_rx[indR_rx]){
-					//DecodeCommands((uint8_t*)&buffer_rx, cmdPosInBuff);
-					HAL_UART_Transmit_IT(&huart2, (uint8_t *) &buffer_tx, strlen((char*)buffer_tx));
+					DecodeCommands((uint8_t*)&buffer_rx, cmdPosInBuff);
+					//HAL_UART_Transmit_IT(&huart2, (uint8_t *) &buffer_tx, strlen((char*)buffer_tx));
 					//HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin);
 				}
 				step=0;
@@ -138,6 +203,84 @@ void DecodeQT(){
 	}
 	indR_rx++;
 }
+
+void DecodeCommands(uint8_t *buffer, uint8_t indexCMD){
+
+	switch(buffer[indexCMD]){
+		case 0xA2://Enviar datos de sensor RFID a pantalla
+
+		break;
+		case 0xA1: //Enviar datos de sensor mag a pantalla
+
+		break;
+		case 0xA0:	//Enviar datos de sensores a pantalla
+			timeoutSENSORS = 4;
+			SENSORS_RECIVE = 1;
+		break;
+		case CMD_ALIVE: //ALIVE
+			SendData(CMD_ALIVE);
+		break;
+
+		case 0xB0://Parada de emergencia
+		break;
+	}
+}
+void SendData(uint8_t cmd){
+
+		buffer_tx[indW_tx++]='U';
+		buffer_tx[indW_tx++]='N';
+		buffer_tx[indW_tx++]='E';
+		buffer_tx[indW_tx++]='R';
+
+		switch(cmd){
+			case CMD_ALIVE:
+				buffer_tx[indW_tx++] = 0x02;
+				buffer_tx[indW_tx++] = 0x00;
+				buffer_tx[indW_tx++] = ':';
+				buffer_tx[indW_tx++] = cmd;
+			break;
+			case CMD_MAG_SENSOR:
+				buffer_tx[indW_tx++] = 0x08;
+				buffer_tx[indW_tx++] = 0x00;
+				buffer_tx[indW_tx++] = ':';
+				buffer_tx[indW_tx++] = cmd;
+				buffer_tx[indW_tx++] = 0x05; //1
+				buffer_tx[indW_tx++] = 0x05; //2
+				buffer_tx[indW_tx++] = 0x05; //3
+				buffer_tx[indW_tx++] = 0x05; //4
+				buffer_tx[indW_tx++] = 0x05; //5
+				buffer_tx[indW_tx++] = 0x05; //6
+			break;
+			case CMD_RFID_SENSOR:
+				buffer_tx[indW_tx++] = 0x08;
+				buffer_tx[indW_tx++] = 0x00;
+				buffer_tx[indW_tx++] = ':';
+				buffer_tx[indW_tx++] = cmd;
+				buffer_tx[indW_tx++] = 0x05; //1
+				buffer_tx[indW_tx++] = 0x05; //2
+				buffer_tx[indW_tx++] = 0x05; //3
+				buffer_tx[indW_tx++] = 0x05; //4
+				buffer_tx[indW_tx++] = 0x05; //5
+				buffer_tx[indW_tx++] = 0x05; //6
+			break;
+			default:
+			break;
+		}
+
+
+		cksTX=0;
+		for(uint8_t i=0; i<indW_tx; i++) {
+			cksTX^=buffer_tx[i];
+			//pc.printf("%d - %x - %d   v: %d \n",i,cks,cks,tx[i]);
+		}
+		if(cksTX>0)
+			buffer_tx[indW_tx++]=cksTX;
+
+		//listoSend = 1;
+	//HAL_UART_Transmit_IT(&huart2, (uint8_t *) &buffer_tx, size);
+
+}
+
 /* USER CODE END 0 */
 
 /**
@@ -170,8 +313,10 @@ int main(void)
   MX_GPIO_Init();
   MX_DMA_Init();
   MX_USART2_UART_Init();
+  MX_TIM3_Init();
   /* USER CODE BEGIN 2 */
   HAL_UART_Receive_IT(&huart2, (uint8_t *) &buffer_rx[indW_rx], 1);
+  HAL_TIM_Base_Start_IT(&htim3);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -183,6 +328,18 @@ int main(void)
 
 	  if(indR_rx != indW_rx){
 		  DecodeQT();
+	  }
+
+
+	  if(indR_tx != indW_tx){
+	  	  uart();
+	  }
+
+
+	  if(!timeoutSENSORS){
+		  SendData(CMD_MAG_SENSOR);
+		  SendData(CMD_RFID_SENSOR);
+		  timeoutSENSORS = 4;
 	  }
     /* USER CODE END WHILE */
 
@@ -235,6 +392,51 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
+}
+
+/**
+  * @brief TIM3 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM3_Init(void)
+{
+
+  /* USER CODE BEGIN TIM3_Init 0 */
+
+  /* USER CODE END TIM3_Init 0 */
+
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM3_Init 1 */
+
+  /* USER CODE END TIM3_Init 1 */
+  htim3.Instance = TIM3;
+  htim3.Init.Prescaler = 100;
+  htim3.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim3.Init.Period = 8400;
+  htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim3.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim3) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim3, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim3, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM3_Init 2 */
+
+  /* USER CODE END TIM3_Init 2 */
+
 }
 
 /**
