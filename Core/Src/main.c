@@ -89,6 +89,7 @@ volatile uint8_t cksTX = 0;
 volatile uint8_t listoSend = 0;
 
 uint8_t timeoutSENSORS = 0;
+uint8_t timeoutALIVE = 0;
 uint16_t size=0;
 
 
@@ -128,14 +129,15 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim){
 	if(SENSORS_RECIVE && timeoutSENSORS){
 		timeoutSENSORS--;
 	}
+	timeoutALIVE--;
 }
 
 void uart(){
 
-		if((huart2.Instance->SR & UART_FLAG_TXE)==UART_FLAG_TXE){
+		/*if((huart2.Instance->SR & UART_FLAG_TXE)==UART_FLAG_TXE){
 			huart2.Instance->DR=buffer_tx[indR_tx];
 			indR_tx++;
-		}
+		}*/
 /*
 	if(indW_tx > indR_tx){
 			size = indW_tx - indR_tx;
@@ -144,6 +146,8 @@ void uart(){
 	}
 	HAL_UART_Transmit_IT(&huart2, (uint8_t *) &buffer_tx, size);
 	indR_tx++;*/
+	        HAL_UART_Transmit_IT(&huart2, (uint8_t *) &buffer_tx[indR_tx], size);
+	        indR_tx = indW_tx;
 }
 
 void DecodeQT(){
@@ -177,7 +181,7 @@ void DecodeQT(){
 			break;
 		case 3:
 			if(buffer_rx[indR_rx]==':'){
-				cksQT^='U'^'N'^'E'^'R'^bytesUNERprotocol^0x00^':';
+				cksQT='U'^'N'^'E'^'R'^bytesUNERprotocol^0x00^':';
 				step++;
 				//HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin);
 			}else{
@@ -194,7 +198,7 @@ void DecodeQT(){
 				if(cksQT==buffer_rx[indR_rx]){
 					DecodeCommands((uint8_t*)&buffer_rx, cmdPosInBuff);
 					//HAL_UART_Transmit_IT(&huart2, (uint8_t *) &buffer_tx, strlen((char*)buffer_tx));
-					//HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin);
+					HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin);
 				}
 				step=0;
 				counter=1;
@@ -277,7 +281,7 @@ void SendData(uint8_t cmd){
 			buffer_tx[indW_tx++]=cksTX;
 
 		//listoSend = 1;
-	//HAL_UART_Transmit_IT(&huart2, (uint8_t *) &buffer_tx, size);
+	//HAL_UART_Transmit_IT(&huart2, (uint8_t *) &buffer_tx, indW_tx);
 
 }
 
@@ -332,10 +336,19 @@ int main(void)
 
 
 	  if(indR_tx != indW_tx){
+		  if(indW_tx > indR_tx){
+		        size = indW_tx - indR_tx;
+		  }else{
+		        size = 256 - indR_tx;
+		  }
 	  	  uart();
 	  }
-
-
+/*
+	  if(!timeoutALIVE){
+		  SendData(CMD_ALIVE);
+		  timeoutALIVE = 100;
+	  }
+*/
 	  if(!timeoutSENSORS){
 		  SendData(CMD_MAG_SENSOR);
 		  SendData(CMD_RFID_SENSOR);
